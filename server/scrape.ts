@@ -57,6 +57,7 @@ const SOCIAL_HOSTS = [
   "discord.com",
   "t.me",
   "telegram.me",
+  "telegram.org",
   "wa.me",
   "whatsapp.com",
   "mastodon.social",
@@ -196,6 +197,8 @@ const PHONE_RE =
 
 const PHONE_COMPACT_RE = /(?:\+|00)\d{10,15}|\b\d{10,12}\b/g;
 
+const BG_IMAGE_RE = /background(?:-image)?\s*:\s*url\(['"]?([^'")\s]+)['"]?\)/gi;
+
 function deobfuscateContacts(raw: string): string {
   return raw
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
@@ -214,13 +217,17 @@ function deobfuscateContacts(raw: string): string {
 function isLikelyEmail(e: string): boolean {
   const lower = e.toLowerCase();
   if (lower.length > 120) return false;
-  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".svg")) {
+  if (
+    lower.endsWith(".png") ||
+    lower.endsWith(".jpg") ||
+    lower.endsWith(".jpeg") ||
+    lower.endsWith(".gif") ||
+    lower.endsWith(".webp") ||
+    lower.endsWith(".svg")
+  ) {
     return false;
   }
-  if (lower.includes("example.com") || lower.includes("domain.com") || lower.includes("email.com")) {
-    // still allow real-looking ones; only skip pure placeholders
-    if (/^(name|user|email|your|test)@/.test(lower)) return false;
-  }
+  if (/^(name|user|email|your|test)@/.test(lower)) return false;
   if (lower.includes("sentry") || lower.includes("wixpress") || lower.includes("schema.org")) return false;
   return true;
 }
@@ -229,9 +236,9 @@ function extractEmails(hay: string, extra: string[] = []): string[] {
   const normalized = deobfuscateContacts(hay);
   const found = normalized.match(EMAIL_RE) ?? [];
   const mailto =
-    normalized.match(/mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,24})/gi)?.map((m) =>
-      m.replace(/^mailto:/i, "").split("?")[0],
-    ) ?? [];
+    normalized
+      .match(/mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,24})/gi)
+      ?.map((m) => m.replace(/^mailto:/i, "").split("?")[0]) ?? [];
   return unique([...extra, ...found, ...mailto].filter(isLikelyEmail)).slice(0, 300);
 }
 
@@ -242,9 +249,7 @@ function normalizePhone(p: string): string {
 function isLikelyPhone(p: string): boolean {
   const digits = p.replace(/\D/g, "");
   if (digits.length < 10 || digits.length > 15) return false;
-  // skip dates / ids that are all the same digit
   if (/^(\d)\1+$/.test(digits)) return false;
-  // skip obvious years-only noise
   if (digits.length === 10 && /^20\d{8}$/.test(digits)) return false;
   return true;
 }
@@ -254,8 +259,9 @@ function extractPhones(hay: string, extra: string[] = []): string[] {
   const spaced = normalized.match(PHONE_RE) ?? [];
   const compact = normalized.match(PHONE_COMPACT_RE) ?? [];
   const tel =
-    normalized.match(/tel:(\+?[\d\s.\-()]{7,20})/gi)?.map((m) => m.replace(/^tel:/i, "").split("?")[0]) ??
-    [];
+    normalized
+      .match(/tel:(\+?[\d\s.\-()]{7,20})/gi)
+      ?.map((m) => m.replace(/^tel:/i, "").split("?")[0]) ?? [];
   return unique(
     [...extra, ...spaced, ...compact, ...tel].map(normalizePhone).filter(isLikelyPhone),
   ).slice(0, 100);
@@ -268,6 +274,85 @@ function isSocial(href: string): boolean {
   } catch {
     return false;
   }
+}
+
+function isTelegramHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^www\./, "");
+  return h === "t.me" || h === "telegram.me" || h === "telegram.org" || h.endsWith(".t.me");
+}
+
+/** Public preview URLs only — does not unlock restricted Telegram media. */
+function telegramEmbedCandidates(pageUrl: string): string[] {
+  try {
+    const u = new URL(pageUrl);
+    if (!isTelegramHost(u.hostname)) return [];
+    const parts = u.pathname.replace(/^\/+|\/+$/g, "").split("/");
+    // /username/123 or /s/username/123
+    let user = "";
+    let post = "";
+    if (parts[0] === "s" && parts.length >= 3) {
+      user = parts[1];
+      post = parts[2];
+    } else if (parts.length >= 2 && /^\d+$/.test(parts[1])) {
+      user = parts[0];
+      post = parts[1];
+    } else if (parts.length === 1 && parts[0] && !parts[0].startsWith("+")) {
+      // channel root — public preview list
+      user = parts[0];
+    }
+    if (!user) return [];
+    const out: string[] = [];
+    if (post) {
+      out.push(`https://t.me/${user}/${post}?embed=1&mode=tme`);
+      out.push(`https://t.me/s/${user}/${post}`);
+    } else {
+      out.push(`https://t.me/s/${user}`);
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+function pushMedia(
+  list: ExtractedMedia[],
+  seen: Set<string>,
+  item: ExtractedMedia,
+) {
+  const key = item.src.trim();
+  if (!key || key.startsWith("data:") && key.length < 32) return;
+  if (seen.has(key)) return;
+  seen.add(key);
+  list.push(item);
+}
+
+function extractBackgroundImages(
+  $: ReturnType<typeof cheerio.load>,
+  resolve: (href: string) => string,
+  media: ExtractedMedia[],
+  seen: Set<string>,
+) {
+  $("[style]").each((_, el) => {
+    const style = $(el).attr("style") || "";
+    let m: RegExpExecArray | null;
+    BG_IMAGE_RE.lastIndex = 0;
+    while ((m = BG_IMAGE_RE.exec(style))) {
+      const raw = (m[1] || "").trim();
+      if (!raw || raw.startsWith("data:")) continue;
+      const src = resolve(raw);
+      const cls = ($(el).attr("class") || "").toLowerCase();
+      const isVideoThumb =
+        cls.includes("video") || cls.includes("thumb") || cls.includes("tgme_widget_message_video");
+      pushMedia(media, seen, {
+        src,
+        alt: isVideoThumb ? "telegram video thumb" : "telegram photo",
+        type: "image",
+        width: "",
+        height: "",
+        poster: "",
+      });
+    }
+  });
 }
 
 function detectTech(html: string, $: ReturnType<typeof cheerio.load>, generator: string): TechHint[] {
@@ -289,6 +374,8 @@ function detectTech(html: string, $: ReturnType<typeof cheerio.load>, generator:
   if ($('meta[name="viewport"]').length) add("Responsive", "viewport meta");
   if ($('script[src*="jquery"]').length) add("jQuery", "jquery script");
   if (html.includes("csrf-token") || $('meta[name="csrf-token"]').length) add("CSRF token", "csrf-token meta");
+  if (html.includes("tgme_") || html.includes("telegram.org") || html.includes("telesco.pe"))
+    add("Telegram", "tgme / telesco.pe");
   return hints;
 }
 
@@ -551,7 +638,6 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
     });
   });
 
-  // also pull from common contact attributes
   $full("[href], [data-email], [data-mail], [data-phone], [data-tel]").each((_, el) => {
     const n = $full(el);
     const de = n.attr("data-email") || n.attr("data-mail") || "";
@@ -561,11 +647,14 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
   });
 
   const media: ExtractedMedia[] = [];
+  const mediaSeen = new Set<string>();
+
+  // Standard <img>
   $full("img").each((_, el) => {
     const n = $full(el);
     const src = n.attr("src") || n.attr("data-src") || n.attr("data-lazy-src") || "";
     if (!src) return;
-    media.push({
+    pushMedia(media, mediaSeen, {
       src: src.startsWith("data:") ? clip(src, 120) : resolve(src),
       alt: n.attr("alt") || "",
       type: "image",
@@ -574,27 +663,113 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
       poster: "",
     });
   });
+
+  // Open Graph / Twitter preview images (critical for Telegram share pages)
+  for (const m of meta) {
+    const prop = (m.property || m.name).toLowerCase();
+    if (
+      (prop === "og:image" ||
+        prop === "og:image:url" ||
+        prop === "og:image:secure_url" ||
+        prop === "twitter:image" ||
+        prop === "twitter:image:src") &&
+      m.content
+    ) {
+      pushMedia(media, mediaSeen, {
+        src: resolve(m.content),
+        alt: prop,
+        type: "image",
+        width: "",
+        height: "",
+        poster: "",
+      });
+    }
+    if ((prop === "og:video" || prop === "og:video:url" || prop === "og:video:secure_url") && m.content) {
+      pushMedia(media, mediaSeen, {
+        src: resolve(m.content),
+        alt: prop,
+        type: "video",
+        width: "",
+        height: "",
+        poster: "",
+      });
+    }
+  }
+
+  // CSS background-image (Telegram public posts use this a lot)
+  extractBackgroundImages($full, resolve, media, mediaSeen);
+
+  // <video> / <audio> / <source>
   $full("video,audio").each((_, el) => {
     const n = $full(el);
     const tag = String((el as { tagName?: string }).tagName || "video").toLowerCase();
     const src = n.attr("src") || n.find("source").first().attr("src") || "";
-    media.push({
-      src: src ? resolve(src) : "",
-      alt: n.attr("aria-label") || "",
-      type: tag === "audio" ? "audio" : "video",
-      width: n.attr("width") || "",
-      height: n.attr("height") || "",
-      poster: n.attr("poster") ? resolve(n.attr("poster") || "") : "",
+    const poster = n.attr("poster") ? resolve(n.attr("poster") || "") : "";
+    if (poster) {
+      pushMedia(media, mediaSeen, {
+        src: poster,
+        alt: "video poster",
+        type: "image",
+        width: "",
+        height: "",
+        poster: "",
+      });
+    }
+    if (src) {
+      pushMedia(media, mediaSeen, {
+        src: resolve(src),
+        alt: n.attr("aria-label") || "",
+        type: tag === "audio" ? "audio" : "video",
+        width: n.attr("width") || "",
+        height: n.attr("height") || "",
+        poster,
+      });
+    }
+    n.find("source[src]").each((__, sel) => {
+      const s = $full(sel).attr("src") || "";
+      if (!s) return;
+      pushMedia(media, mediaSeen, {
+        src: resolve(s),
+        alt: "",
+        type: tag === "audio" ? "audio" : "video",
+        width: "",
+        height: "",
+        poster,
+      });
     });
   });
+
   $full("iframe[src]").each((_, el) => {
     const n = $full(el);
-    media.push({
+    pushMedia(media, mediaSeen, {
       src: resolve(n.attr("src") || ""),
       alt: n.attr("title") || n.attr("aria-label") || "",
       type: "iframe",
       width: n.attr("width") || "",
       height: n.attr("height") || "",
+      poster: "",
+    });
+  });
+
+  // Telegram-specific class hooks on public embeds
+  $full(
+    "a.tgme_widget_message_photo_wrap, .tgme_widget_message_photo_wrap, .tgme_widget_message_video_thumb, .tgme_page_photo_image img",
+  ).each((_, el) => {
+    const n = $full(el);
+    const href = n.attr("href") || "";
+    const style = n.attr("style") || "";
+    let bg = "";
+    const bm = /url\(['"]?([^'")]+)['"]?\)/i.exec(style);
+    if (bm) bg = bm[1];
+    const imgSrc = n.is("img") ? n.attr("src") || "" : n.find("img").attr("src") || "";
+    const src = bg || imgSrc || href;
+    if (!src || src.startsWith("#") || src.startsWith("tg://")) return;
+    pushMedia(media, mediaSeen, {
+      src: resolve(src),
+      alt: "telegram media",
+      type: "image",
+      width: "",
+      height: "",
       poster: "",
     });
   });
@@ -691,7 +866,6 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
       .filter(Boolean),
   );
 
-  // full HTML + visible text + JSON-LD + meta (contacts often live outside visible body)
   const hay = [html, text, ...jsonLd, ...meta.map((m) => m.content), description].join("\n");
   const emails = extractEmails(hay, mailtoFromLinks);
   const phones = extractPhones(hay, telFromLinks);
@@ -730,6 +904,56 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
   };
 }
 
+async function fetchOnce(
+  url: URL,
+  headers: Headers,
+): Promise<{ res: Response; redirectChain: RedirectHop[]; finalUrl: string }> {
+  const redirectChain: RedirectHop[] = [];
+  let current = url;
+  let res: Response | null = null;
+
+  for (let i = 0; i <= MAX_REDIRECTS; i++) {
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(), FETCH_MS);
+    try {
+      res = await fetch(current.href, {
+        method: "GET",
+        headers,
+        redirect: "manual",
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(t);
+      if (err instanceof Error && err.name === "AbortError") throw new Error("Fetch timed out.");
+      throw new Error(err instanceof Error ? err.message : "Fetch failed.");
+    } finally {
+      clearTimeout(t);
+    }
+
+    const loc = res.headers.get("location");
+    const isRedirect = res.status >= 300 && res.status < 400 && loc;
+    redirectChain.push({ url: current.href, status: res.status });
+    if (!isRedirect) break;
+    if (i === MAX_REDIRECTS) throw new Error("Too many redirects.");
+    current = await assertPublicUrl(new URL(loc!, current.href).href);
+  }
+
+  if (!res) throw new Error("No response.");
+  return { res, redirectChain, finalUrl: res.url || current.href };
+}
+
+function mergeMedia(primary: ExtractedMedia[], extra: ExtractedMedia[]): ExtractedMedia[] {
+  const seen = new Set(primary.map((m) => m.src.toLowerCase()));
+  const out = [...primary];
+  for (const m of extra) {
+    const key = m.src.toLowerCase();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(m);
+  }
+  return out.slice(0, 600);
+}
+
 export async function scrapePage(input: ScrapeInput): Promise<ScrapeResponse> {
   const requestedUrl = input.url.trim();
   try {
@@ -748,37 +972,8 @@ export async function scrapePage(input: ScrapeInput): Promise<ScrapeResponse> {
       headers.set(name, h.value);
     }
 
-    const redirectChain: RedirectHop[] = [];
     const started = Date.now();
-    let res: Response | null = null;
-
-    for (let i = 0; i <= MAX_REDIRECTS; i++) {
-      const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), FETCH_MS);
-      try {
-        res = await fetch(current.href, {
-          method: "GET",
-          headers,
-          redirect: "manual",
-          signal: controller.signal,
-        });
-      } catch (err) {
-        clearTimeout(t);
-        if (err instanceof Error && err.name === "AbortError") throw new Error("Fetch timed out.");
-        throw new Error(err instanceof Error ? err.message : "Fetch failed.");
-      } finally {
-        clearTimeout(t);
-      }
-
-      const loc = res.headers.get("location");
-      const isRedirect = res.status >= 300 && res.status < 400 && loc;
-      redirectChain.push({ url: current.href, status: res.status });
-      if (!isRedirect) break;
-      if (i === MAX_REDIRECTS) throw new Error("Too many redirects.");
-      current = await assertPublicUrl(new URL(loc!, current.href).href);
-    }
-
-    if (!res) throw new Error("No response.");
+    const { res, redirectChain, finalUrl } = await fetchOnce(current, headers);
 
     const contentType = res.headers.get("content-type") || "";
     const { bytes, truncated } = await readLimited(res);
@@ -790,7 +985,7 @@ export async function scrapePage(input: ScrapeInput): Promise<ScrapeResponse> {
 
     const base = {
       requestedUrl,
-      finalUrl: res.url || current.href,
+      finalUrl,
       kind,
       status: res.status,
       statusText: res.statusText,
@@ -850,7 +1045,33 @@ export async function scrapePage(input: ScrapeInput): Promise<ScrapeResponse> {
       });
     }
 
-    const extracted = parseDocument(text, base.finalUrl, kind === "xml");
+    let extracted = parseDocument(text, base.finalUrl, kind === "xml");
+
+    // For Telegram share pages, also fetch public embed /s/ HTML which often has more media
+    const embedUrls = telegramEmbedCandidates(base.finalUrl);
+    for (const embed of embedUrls.slice(0, 2)) {
+      if (embed === base.finalUrl || embed === requestedUrl) continue;
+      try {
+        const embedUrl = await assertPublicUrl(embed);
+        const { res: eres, finalUrl: eFinal } = await fetchOnce(embedUrl, headers);
+        if (eres.status < 200 || eres.status >= 400) continue;
+        const { bytes: eBytes } = await readLimited(eres);
+        const { text: eText } = decodeBody(eBytes, eres.headers.get("content-type") || "");
+        if (!eText || eText.length < 200) continue;
+        const more = parseDocument(eText, eFinal, false);
+        extracted = {
+          ...extracted,
+          media: mergeMedia(extracted.media || [], more.media || []),
+          links: [...(extracted.links || []), ...(more.links || [])].slice(0, 2500),
+          text: extracted.text || more.text || "",
+          title: extracted.title || more.title || "",
+          description: extracted.description || more.description || "",
+        };
+      } catch {
+        /* embed is best-effort */
+      }
+    }
+
     const raw = clip(text, MAX_RAW_CHARS);
     return {
       ok: true,
