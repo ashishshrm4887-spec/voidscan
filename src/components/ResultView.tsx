@@ -8,10 +8,12 @@ import {
   FormInput,
   Hash,
   Image as ImageIcon,
+  KeyRound,
   Link2,
   Mail,
   Server,
   Type,
+  User,
 } from "lucide-react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/Badge";
@@ -97,6 +99,9 @@ export function ResultView({ result }: { result: ScrapeResult }) {
 
   const images = result.media.filter((m) => m.type === "image");
   const otherMedia = result.media.filter((m) => m.type !== "image");
+  const usernames = result.usernames ?? [];
+  const passwords = result.passwords ?? [];
+  const credentials = result.credentials ?? [];
 
   function exportJson() {
     downloadText(`${fileBase(result)}.json`, JSON.stringify(result, null, 2), "application/json");
@@ -162,7 +167,7 @@ export function ResultView({ result }: { result: ScrapeResult }) {
           <Stat label="Links" value={String(result.links.length)} />
           <Stat label="Media" value={String(result.media.length)} />
           <Stat label="Emails" value={String(result.emails.length)} />
-          <Stat label="Words" value={String(result.wordCount)} />
+          <Stat label="Auth" value={String(usernames.length + passwords.length)} />
         </div>
       </div>
 
@@ -323,7 +328,14 @@ export function ResultView({ result }: { result: ScrapeResult }) {
                       )}
                       <figcaption className="space-y-1 p-2">
                         <div className="line-clamp-2 text-xs text-fg">{m.alt || "untitled"}</div>
-                        <div className="truncate font-mono text-xs text-subtle">{m.src}</div>
+                        <a
+                          href={m.src}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="block truncate font-mono text-xs text-scan hover:underline"
+                        >
+                          {m.src}
+                        </a>
                       </figcaption>
                     </figure>
                   ))}
@@ -335,7 +347,14 @@ export function ResultView({ result }: { result: ScrapeResult }) {
                     <li key={`${m.src}-${i}`} className="flex items-center gap-2 text-sm">
                       <ImageIcon className="size-4 shrink-0 text-muted" />
                       <Badge>{m.type}</Badge>
-                      <span className="min-w-0 truncate font-mono text-xs text-muted">{m.src}</span>
+                      <a
+                        href={m.src}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="min-w-0 truncate font-mono text-xs text-muted hover:text-fg"
+                      >
+                        {m.src}
+                      </a>
                     </li>
                   ))}
                 </ul>
@@ -345,6 +364,10 @@ export function ResultView({ result }: { result: ScrapeResult }) {
         </TabsContent>
 
         <TabsContent value="contacts">
+          <p className="mb-4 text-xs text-muted">
+            Values found in page HTML only (forms, scripts, comments). Password fields are rarely
+            filled in source — empty means nothing was exposed, not that login is broken.
+          </p>
           <div className="grid gap-6 sm:grid-cols-2">
             <div>
               <div className="mb-2 flex items-center justify-between">
@@ -377,7 +400,76 @@ export function ResultView({ result }: { result: ScrapeResult }) {
                 <p className="text-sm text-muted">None found.</p>
               )}
             </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium">
+                  <User className="size-4" /> Usernames
+                </h3>
+                {usernames.length ? <CopyButton value={usernames.join("\n")} /> : null}
+              </div>
+              {usernames.length ? (
+                <ul className="space-y-1 font-mono text-sm text-fg">
+                  {usernames.map((u) => (
+                    <li key={u} className="break-all">
+                      {u}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">None found.</p>
+              )}
+            </div>
+            <div>
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="flex items-center gap-2 text-sm font-medium">
+                  <KeyRound className="size-4" /> Passwords
+                </h3>
+                {passwords.length ? <CopyButton value={passwords.join("\n")} /> : null}
+              </div>
+              {passwords.length ? (
+                <ul className="space-y-1 font-mono text-sm text-fg">
+                  {passwords.map((p) => (
+                    <li key={p} className="break-all">
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-muted">None found in HTML.</p>
+              )}
+            </div>
           </div>
+
+          {credentials.length ? (
+            <div className="mt-6">
+              <h3 className="mb-2 text-sm font-medium">Auth fields / leaked values</h3>
+              <div className="overflow-x-auto rounded-lg bg-elevated shadow-[var(--shadow-border)]">
+                <table className="w-full min-w-[28rem] text-left text-xs">
+                  <thead className="text-subtle">
+                    <tr>
+                      <th className="px-3 py-2 font-medium">kind</th>
+                      <th className="px-3 py-2 font-medium">name</th>
+                      <th className="px-3 py-2 font-medium">value</th>
+                      <th className="px-3 py-2 font-medium">source</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {credentials.map((c, i) => (
+                      <tr key={i} className="border-t border-border align-top">
+                        <td className="px-3 py-2">
+                          <Badge variant={c.kind === "password" ? "danger" : "default"}>{c.kind}</Badge>
+                        </td>
+                        <td className="px-3 py-2 font-mono">{c.name}</td>
+                        <td className="px-3 py-2 break-all font-mono text-fg">{c.value || "(empty)"}</td>
+                        <td className="px-3 py-2 text-muted">{c.source}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
+
           {result.social.length ? (
             <div className="mt-6">
               <h3 className="mb-2 flex items-center gap-2 text-sm font-medium">
@@ -444,6 +536,7 @@ export function ResultView({ result }: { result: ScrapeResult }) {
                         <span>{field.name || "(unnamed)"}</span>
                         <span className="text-subtle">{field.type}</span>
                         {field.hidden ? <Badge variant="warn">hidden</Badge> : null}
+                        {field.type === "password" ? <Badge variant="danger">password</Badge> : null}
                         {field.value ? (
                           <span className="break-all text-muted">{field.value}</span>
                         ) : null}

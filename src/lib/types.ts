@@ -90,6 +90,14 @@ export type RedirectHop = {
   status: number;
 };
 
+/** Credential-like values found in page HTML (forms, JS, comments). */
+export type ExtractedCredential = {
+  kind: "username" | "password" | "email" | "token" | "other";
+  name: string;
+  value: string;
+  source: string;
+};
+
 export type ScrapeResult = {
   ok: true;
   requestedUrl: string;
@@ -132,6 +140,9 @@ export type ScrapeResult = {
   comments: string[];
   emails: string[];
   phones: string[];
+  usernames: string[];
+  passwords: string[];
+  credentials: ExtractedCredential[];
   social: ExtractedLink[];
   feeds: string[];
   tech: TechHint[];
