@@ -188,18 +188,77 @@ function textOf($el: { text: () => string }): string {
   return $el.text().replace(/\s+/g, " ").trim();
 }
 
-const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,24}/g;
-const PHONE_RE =
-  /(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3,4}[\s.-]\d{3,4}(?:[\s.-]\d{3,4})?/g;
+const EMAIL_RE =
+  /[a-zA-Z0-9](?:[a-zA-Z0-9._%+\-]*[a-zA-Z0-9])?@[a-zA-Z0-9](?:[a-zA-Z0-9.\-]*[a-zA-Z0-9])?\.[a-zA-Z]{2,24}/g;
 
-function extractEmails(hay: string): string[] {
-  return unique((hay.match(EMAIL_RE) ?? []).filter((e) => !e.endsWith(".png") && !e.endsWith(".jpg")));
+const PHONE_RE =
+  /(?:\+\d{1,3}[\s.\-]*)?(?:\(?\d{2,4}\)?[\s.\-]*)?\d{2,4}[\s.\-]+\d{2,4}(?:[\s.\-]+\d{2,4})?/g;
+
+const PHONE_COMPACT_RE = /(?:\+|00)\d{10,15}|\b\d{10,12}\b/g;
+
+function deobfuscateContacts(raw: string): string {
+  return raw
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCharCode(parseInt(h, 16)))
+    .replace(/\s*\[\s*(?:at|@)\s*\]\s*/gi, "@")
+    .replace(/\s*\(\s*(?:at|@)\s*\)\s*/gi, "@")
+    .replace(/\s*\{\s*(?:at|@)\s*\}\s*/gi, "@")
+    .replace(/\s+(?:at|AT)\s+/g, "@")
+    .replace(/\s*\[\s*(?:dot|\.)\s*\]\s*/gi, ".")
+    .replace(/\s*\(\s*(?:dot|\.)\s*\)\s*/gi, ".")
+    .replace(/\s+(?:dot|DOT)\s+/g, ".")
+    .replace(/mailto:/gi, " mailto:")
+    .replace(/tel:/gi, " tel:");
 }
 
-function extractPhones(hay: string): string[] {
+function isLikelyEmail(e: string): boolean {
+  const lower = e.toLowerCase();
+  if (lower.length > 120) return false;
+  if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".gif") || lower.endsWith(".webp") || lower.endsWith(".svg")) {
+    return false;
+  }
+  if (lower.includes("example.com") || lower.includes("domain.com") || lower.includes("email.com")) {
+    // still allow real-looking ones; only skip pure placeholders
+    if (/^(name|user|email|your|test)@/.test(lower)) return false;
+  }
+  if (lower.includes("sentry") || lower.includes("wixpress") || lower.includes("schema.org")) return false;
+  return true;
+}
+
+function extractEmails(hay: string, extra: string[] = []): string[] {
+  const normalized = deobfuscateContacts(hay);
+  const found = normalized.match(EMAIL_RE) ?? [];
+  const mailto =
+    normalized.match(/mailto:([a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,24})/gi)?.map((m) =>
+      m.replace(/^mailto:/i, "").split("?")[0],
+    ) ?? [];
+  return unique([...extra, ...found, ...mailto].filter(isLikelyEmail)).slice(0, 300);
+}
+
+function normalizePhone(p: string): string {
+  return p.replace(/\s+/g, " ").trim();
+}
+
+function isLikelyPhone(p: string): boolean {
+  const digits = p.replace(/\D/g, "");
+  if (digits.length < 10 || digits.length > 15) return false;
+  // skip dates / ids that are all the same digit
+  if (/^(\d)\1+$/.test(digits)) return false;
+  // skip obvious years-only noise
+  if (digits.length === 10 && /^20\d{8}$/.test(digits)) return false;
+  return true;
+}
+
+function extractPhones(hay: string, extra: string[] = []): string[] {
+  const normalized = deobfuscateContacts(hay);
+  const spaced = normalized.match(PHONE_RE) ?? [];
+  const compact = normalized.match(PHONE_COMPACT_RE) ?? [];
+  const tel =
+    normalized.match(/tel:(\+?[\d\s.\-()]{7,20})/gi)?.map((m) => m.replace(/^tel:/i, "").split("?")[0]) ??
+    [];
   return unique(
-    (hay.match(PHONE_RE) ?? []).filter((p) => p.replace(/\D/g, "").length >= 10).slice(0, 200),
-  );
+    [...extra, ...spaced, ...compact, ...tel].map(normalizePhone).filter(isLikelyPhone),
+  ).slice(0, 100);
 }
 
 function isSocial(href: string): boolean {
@@ -463,13 +522,23 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
   const $full = cheerio.load(html, xml ? { xml: true } : undefined);
 
   const links: ExtractedLink[] = [];
+  const mailtoFromLinks: string[] = [];
+  const telFromLinks: string[] = [];
   $full("a[href]").each((_, el) => {
     const n = $full(el);
-    const hrefRaw = n.attr("href") || "";
+    const hrefRaw = (n.attr("href") || "").trim();
+    if (hrefRaw.toLowerCase().startsWith("mailto:")) {
+      const addr = hrefRaw.replace(/^mailto:/i, "").split("?")[0].trim();
+      if (addr) mailtoFromLinks.push(addr);
+    }
+    if (hrefRaw.toLowerCase().startsWith("tel:")) {
+      const num = hrefRaw.replace(/^tel:/i, "").split("?")[0].trim();
+      if (num) telFromLinks.push(num);
+    }
     const href =
       hrefRaw.startsWith("#") ||
-      hrefRaw.startsWith("mailto:") ||
-      hrefRaw.startsWith("tel:") ||
+      hrefRaw.toLowerCase().startsWith("mailto:") ||
+      hrefRaw.toLowerCase().startsWith("tel:") ||
       hrefRaw.startsWith("javascript:")
         ? hrefRaw
         : resolve(hrefRaw);
@@ -480,6 +549,15 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
       target: n.attr("target") || "",
       kind: classifyLink(pageUrl, href),
     });
+  });
+
+  // also pull from common contact attributes
+  $full("[href], [data-email], [data-mail], [data-phone], [data-tel]").each((_, el) => {
+    const n = $full(el);
+    const de = n.attr("data-email") || n.attr("data-mail") || "";
+    const dp = n.attr("data-phone") || n.attr("data-tel") || "";
+    if (de) mailtoFromLinks.push(de);
+    if (dp) telFromLinks.push(dp);
   });
 
   const media: ExtractedMedia[] = [];
@@ -613,9 +691,10 @@ function parseDocument(html: string, pageUrl: string, xml: boolean): Partial<Scr
       .filter(Boolean),
   );
 
-  const hay = `${html}\n${text}`;
-  const emails = extractEmails(hay).slice(0, 300);
-  const phones = extractPhones(text).slice(0, 100);
+  // full HTML + visible text + JSON-LD + meta (contacts often live outside visible body)
+  const hay = [html, text, ...jsonLd, ...meta.map((m) => m.content), description].join("\n");
+  const emails = extractEmails(hay, mailtoFromLinks);
+  const phones = extractPhones(hay, telFromLinks);
   const social = links.filter((l) => isSocial(l.href));
   const tech = detectTech(html, $full, generator);
 
@@ -751,6 +830,7 @@ export async function scrapePage(input: ScrapeInput): Promise<ScrapeResponse> {
         text: clip(pretty, MAX_TEXT_CHARS),
         wordCount: pretty.split(/\s+/).filter(Boolean).length,
         emails: extractEmails(pretty),
+        phones: extractPhones(pretty),
         raw,
         truncatedRaw: pretty.length > MAX_RAW_CHARS,
       });
