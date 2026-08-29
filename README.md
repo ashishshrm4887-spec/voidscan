@@ -2,29 +2,35 @@
 
 Full-spectrum page extractor. Paste any public URL — pull headers, text, links, media, forms, scripts, contacts, and raw source with **no content filter**.
 
-## Features
+## Why scrape returns nothing
 
-- Server-side fetch (no browser CORS limits)
-- HTML / JSON / XML / text responses
-- Meta, Open Graph, JSON-LD, headings, visible text
-- Links, images, video, iframes
-- Emails, phones, social URLs
-- Forms (including hidden fields), tables, scripts, HTML comments
-- Response headers and Set-Cookie
-- Export JSON, Markdown, HTML, CSV
-- Local history (browser `localStorage`)
+Scraping runs on a **Node API**, not in the browser alone.
 
-Private/loopback addresses are blocked (SSRF protection). Scraped HTML is shown as **text** so nothing executes in your browser.
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| **API offline** badge | Server not running | Run `npm run dev` (starts UI **and** API) |
+| Opens but Extract does nothing useful | Only Vite client, no API | Same: full `npm run dev`, open **http://localhost:5173** |
+| Opened `index.html` as a file | No server at all | Use `npm run dev`, not double-click HTML |
+| Some sites empty / error | Site blocks bots or needs login | Try `https://example.com` first |
+
+Header shows **API online** / **API offline** so you can see the problem immediately.
 
 ## Quick start
 
 ```bash
+git clone https://github.com/ashishshrm4887-spec/voidscan.git
+cd voidscan
 npm install
 npm run dev
 ```
 
-- App: http://localhost:5173
-- API: http://localhost:3001
+Then open **http://localhost:5173** (not port 3001 for the UI).
+
+- UI (Vite): http://localhost:5173  
+- API (Express): http://localhost:3001  
+- Health: http://localhost:3001/api/health  
+
+Click the **example.com** chip — you should get title, links, and raw HTML.
 
 Production:
 
@@ -33,7 +39,7 @@ npm run build
 npm start
 ```
 
-Serves the built UI and API on port `3001`.
+Serves UI + API together on port `3001`.
 
 ## API
 

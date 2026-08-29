@@ -38,9 +38,17 @@ export function ScraperApp() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ScrapeResult | null>(null);
   const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [apiUp, setApiUp] = useState<boolean | null>(null);
 
   useEffect(() => {
     setHistory(loadHistory());
+    fetch("/api/health")
+      .then(async (r) => {
+        if (!r.ok) throw new Error("bad status");
+        const j = (await r.json()) as { ok?: boolean };
+        setApiUp(j.ok === true);
+      })
+      .catch(() => setApiUp(false));
   }, []);
 
   async function run(target = url) {
@@ -57,6 +65,7 @@ export function ScraperApp() {
         headerName.trim() && headerValue
           ? [{ name: headerName.trim(), value: headerValue }]
           : undefined;
+
       const res = await fetch("/api/scrape", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -66,13 +75,39 @@ export function ScraperApp() {
           extraHeaders,
         }),
       });
-      const data = (await res.json()) as ScrapeResponse;
-      if (!data.ok) {
+
+      const text = await res.text();
+      let data: ScrapeResponse;
+      try {
+        data = JSON.parse(text) as ScrapeResponse;
+      } catch {
+        const message =
+          res.status === 404 || res.status === 502 || res.status === 504
+            ? "API server is not running. In a terminal run: npm run dev (starts both UI and API)."
+            : `Server returned non-JSON (HTTP ${res.status}). Is the API up on port 3001?`;
         setResult(null);
-        setError(data.error);
-        toast.error(data.error);
+        setError(message);
+        setApiUp(false);
+        toast.error(message);
         return;
       }
+
+      if (!res.ok && !("ok" in data)) {
+        const message = `Request failed (HTTP ${res.status}).`;
+        setResult(null);
+        setError(message);
+        toast.error(message);
+        return;
+      }
+
+      if (!data.ok) {
+        setResult(null);
+        setError(data.error || "Scrape failed.");
+        toast.error(data.error || "Scrape failed.");
+        return;
+      }
+
+      setApiUp(true);
       setResult(data);
       setHistory(
         pushHistory({
@@ -88,10 +123,17 @@ export function ScraperApp() {
           emails: data.emails.length,
         }),
       );
+      toast.success(`Extracted ${data.title || hostOf(data.finalUrl)}`);
     } catch (err) {
-      const message = err instanceof Error ? err.message : "Scrape failed.";
+      const message =
+        err instanceof TypeError
+          ? "Cannot reach API. Run npm run dev so both the UI and the server start."
+          : err instanceof Error
+            ? err.message
+            : "Scrape failed.";
       setResult(null);
       setError(message);
+      setApiUp(false);
       toast.error(message);
     } finally {
       setLoading(false);
@@ -112,7 +154,16 @@ export function ScraperApp() {
               <div className="text-xs text-muted">Full-spectrum extractor</div>
             </div>
           </div>
-          <Badge>no filter</Badge>
+          <div className="flex items-center gap-2">
+            {apiUp === false ? (
+              <Badge variant="danger">API offline</Badge>
+            ) : apiUp === true ? (
+              <Badge variant="success">API online</Badge>
+            ) : (
+              <Badge>checking API…</Badge>
+            )}
+            <Badge>no filter</Badge>
+          </div>
         </div>
       </header>
 
@@ -175,6 +226,19 @@ export function ScraperApp() {
               Paste any public URL. VOIDSCAN fetches it server-side and extracts headers, text,
               links, media, forms, hidden fields, scripts, comments, and contacts — unfiltered.
             </p>
+
+            {apiUp === false ? (
+              <div className="mt-4 rounded-md border border-danger/40 bg-danger/10 px-3 py-3 text-sm text-danger">
+                <strong className="font-medium">API offline.</strong> Scraping needs the Node server.
+                In the project folder run:
+                <pre className="mt-2 overflow-x-auto rounded bg-bg px-2 py-1 font-mono text-xs text-fg">
+                  npm install{"\n"}npm run dev
+                </pre>
+                Then open <span className="font-mono">http://localhost:5173</span> (not a random port
+                or opened HTML file).
+              </div>
+            ) : null}
+
             <form
               className="mt-5 flex flex-col gap-3 sm:flex-row"
               onSubmit={(e) => {
@@ -276,7 +340,8 @@ export function ScraperApp() {
                 <div className="rounded-xl px-4 py-16 text-center shadow-[var(--shadow-border)]">
                   <p className="font-mono text-xs uppercase tracking-[0.2em] text-scan">Ready</p>
                   <p className="mt-2 text-sm text-muted">
-                    No rewrite. No sanitizer. Source is shown as text so nothing executes.
+                    Try the <span className="font-mono text-fg">example.com</span> chip first. Source is
+                    shown as text so nothing executes.
                   </p>
                 </div>
               )
