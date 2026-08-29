@@ -1,54 +1,51 @@
 # VOIDSCAN
 
-Full-spectrum page extractor. Paste any public URL — headers, text, links, media, forms, scripts, contacts, raw source. **No content filter.**
+Full-spectrum page extractor. Paste any public URL — headers, text, links, media, forms, scripts, contacts, raw source.
 
-**Repo (public):** https://github.com/ashishshrm4887-spec/voidscan
-
----
-
-## Publish online (easiest) — Vercel
-
-1. Open [https://vercel.com/new](https://vercel.com/new)
-2. Sign in with **GitHub**
-3. Import **`ashishshrm4887-spec/voidscan`**
-4. Click **Deploy** (defaults are fine)
-5. Open the link Vercel gives you (like `https://voidscan-xxx.vercel.app`)
-6. Try **https://example.com** in the app
-
-That’s your published scraper. No local server needed after deploy.
+**Repo:** https://github.com/ashishshrm4887-spec/voidscan
 
 ---
 
-## Run on your computer
+## Two ways to scrape
+
+| Stack | Parser | Fetcher | Use for |
+| --- | --- | --- | --- |
+| **Web app** (TypeScript) | Cheerio | `fetch` | UI + API on localhost / Vercel |
+| **Python CLI** | **BeautifulSoup** | **requests** | Scripts, notebooks, terminal |
+
+Cheerio (Node) ≈ BeautifulSoup (Python). Same job: parse HTML and extract data.
+
+---
+
+## Python (requests + BeautifulSoup)
 
 ```bash
-git clone https://github.com/ashishshrm4887-spec/voidscan.git
-cd voidscan
+cd python
+pip install -r requirements.txt
+python scrape.py https://example.com
+python scrape.py https://example.com --json result.json
+```
+
+Extracts title, description, emails, phones, usernames/password fields, links, media (including CSS backgrounds + og:image), forms, meta, and visible text.
+
+---
+
+## Web app (Node)
+
+```bash
 npm install
 npm run dev
 ```
 
-Open **http://localhost:5173**
+Open **http://localhost:5173** — header must show **API online**.
 
-You must see **API online** in the header. If it says **API offline**, the server is not running — use `npm run dev`, not only the UI.
+### Publish (Vercel)
 
----
-
-## API
-
-`POST /api/scrape`
-
-```json
-{ "url": "https://example.com" }
-```
-
-`GET /api/health` → `{ "ok": true }`
+1. [vercel.com/new](https://vercel.com/new)
+2. Import this GitHub repo
+3. Deploy
 
 ---
-
-## Stack
-
-Vite + React + Express/Cheerio · Tailwind · works locally and on Vercel
 
 ## License
 
