@@ -1,21 +1,25 @@
 # VOIDSCAN
 
-Full-spectrum page extractor. Paste any public URL — pull headers, text, links, media, forms, scripts, contacts, and raw source with **no content filter**.
+Full-spectrum page extractor. Paste any public URL — headers, text, links, media, forms, scripts, contacts, raw source. **No content filter.**
 
-## Why scrape returns nothing
+**Repo (public):** https://github.com/ashishshrm4887-spec/voidscan
 
-Scraping runs on a **Node API**, not in the browser alone.
+---
 
-| Symptom | Cause | Fix |
-| --- | --- | --- |
-| **API offline** badge | Server not running | Run `npm run dev` (starts UI **and** API) |
-| Opens but Extract does nothing useful | Only Vite client, no API | Same: full `npm run dev`, open **http://localhost:5173** |
-| Opened `index.html` as a file | No server at all | Use `npm run dev`, not double-click HTML |
-| Some sites empty / error | Site blocks bots or needs login | Try `https://example.com` first |
+## Publish online (easiest) — Vercel
 
-Header shows **API online** / **API offline** so you can see the problem immediately.
+1. Open [https://vercel.com/new](https://vercel.com/new)
+2. Sign in with **GitHub**
+3. Import **`ashishshrm4887-spec/voidscan`**
+4. Click **Deploy** (defaults are fine)
+5. Open the link Vercel gives you (like `https://voidscan-xxx.vercel.app`)
+6. Try **https://example.com** in the app
 
-## Quick start
+That’s your published scraper. No local server needed after deploy.
+
+---
+
+## Run on your computer
 
 ```bash
 git clone https://github.com/ashishshrm4887-spec/voidscan.git
@@ -24,40 +28,27 @@ npm install
 npm run dev
 ```
 
-Then open **http://localhost:5173** (not port 3001 for the UI).
+Open **http://localhost:5173**
 
-- UI (Vite): http://localhost:5173  
-- API (Express): http://localhost:3001  
-- Health: http://localhost:3001/api/health  
+You must see **API online** in the header. If it says **API offline**, the server is not running — use `npm run dev`, not only the UI.
 
-Click the **example.com** chip — you should get title, links, and raw HTML.
-
-Production:
-
-```bash
-npm run build
-npm start
-```
-
-Serves UI + API together on port `3001`.
+---
 
 ## API
 
 `POST /api/scrape`
 
 ```json
-{
-  "url": "https://example.com",
-  "userAgent": "optional custom UA",
-  "extraHeaders": [{ "name": "Accept-Language", "value": "en" }]
-}
+{ "url": "https://example.com" }
 ```
+
+`GET /api/health` → `{ "ok": true }`
+
+---
 
 ## Stack
 
-- Vite + React 19 + TypeScript
-- Express + Cheerio
-- Tailwind CSS v4
+Vite + React + Express/Cheerio · Tailwind · works locally and on Vercel
 
 ## License
 
